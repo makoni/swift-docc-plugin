@@ -37,6 +37,8 @@ final class HelpInformationTests: XCTestCase {
             PLUGIN OPTIONS:
               --target <target>       Generate documentation for the specified target.
               --product <product>     Generate documentation for the specified product.
+              --output-format         Select the plugin output format. (default: doccarchive)
+                    Supported values are: `doccarchive`, `gitbook`.
               --disable-indexing, --no-indexing
                                       Disable indexing for the produced DocC archive.
                     Produces a DocC archive that is best-suited for hosting online but incompatible with Xcode.

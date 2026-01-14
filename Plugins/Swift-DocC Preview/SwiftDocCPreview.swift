@@ -39,6 +39,16 @@ import PackagePlugin
             print(helpInfo)
             return
         }
+
+        if let unknownOutputFormat = parsedArguments.pluginArguments.unknownOutputFormat {
+            Diagnostics.error("Unsupported value '\(unknownOutputFormat)' for '--output-format'. Supported values are: doccarchive, gitbook.")
+            return
+        }
+
+        if parsedArguments.pluginArguments.outputFormat == .gitbook {
+            Diagnostics.error("The '--output-format gitbook' option is only supported for 'generate-documentation', not 'preview-documentation'.")
+            return
+        }
         
         let verbose = parsedArguments.pluginArguments.verbose
         

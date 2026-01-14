@@ -31,6 +31,7 @@ let package = Package(
             ),
             dependencies: [
                 "snippet-extract",
+                "docc-gitbook-export",
             ],
             path: "Plugins/Swift-DocC Convert",
             exclude: ["Symbolic Links/README.md"]
@@ -77,6 +78,12 @@ let package = Package(
             dependencies: [
                 "Snippets",
                 .product(name: "SymbolKit", package: "swift-docc-symbolkit"),
+            ]),
+
+        .executableTarget(
+            name: "docc-gitbook-export",
+            dependencies: [
+                "SwiftDocCPluginUtilities",
             ]),
     ]
 )

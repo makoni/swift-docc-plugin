@@ -38,9 +38,15 @@ import PackagePlugin
             print(helpInfo)
             return
         }
+
+        if let unknownOutputFormat = parsedArguments.pluginArguments.unknownOutputFormat {
+            Diagnostics.error("Unsupported value '\(unknownOutputFormat)' for '--output-format'. Supported values are: doccarchive, gitbook.")
+            return
+        }
         
         let verbose = parsedArguments.pluginArguments.verbose
         let isCombinedDocumentationEnabled = parsedArguments.pluginArguments.enableCombinedDocumentation
+        let outputFormat = parsedArguments.pluginArguments.outputFormat
         
         let doccFeatures = try? DocCFeatures(doccExecutable: doccExecutableURL)
         if isCombinedDocumentationEnabled, doccFeatures?.contains(.linkDependencies) == false {
@@ -64,6 +70,12 @@ import PackagePlugin
         
         let intermediateArchivesDirectory = URL(fileURLWithPath: context.pluginWorkDirectory.appending("intermediates").string)
         try? FileManager.default.createDirectory(at: intermediateArchivesDirectory, withIntermediateDirectories: true)
+
+    #if swift(>=5.7)
+        let gitbookExportTool = try? context.tool(named: "docc-gitbook-export")
+    #else
+        let gitbookExportTool: PluginContext.Tool? = nil
+    #endif
         
         // An inner function that defines the work to build documentation for a given target.
         func performBuildTask(_ task: DocumentationBuildGraph<SourceModuleDocumentationBuildGraphTarget>.Task) throws -> URL? {
@@ -160,6 +172,83 @@ import PackagePlugin
         }
         
         guard isCombinedDocumentationEnabled else {
+            if outputFormat == .gitbook {
+                guard let gitbookExportTool else {
+                    Diagnostics.error("The GitBook export tool is not available in this toolchain/build.")
+                    return
+                }
+
+                let defaultPluginOutputDirectory = URL(fileURLWithPath: context.pluginWorkDirectory.string)
+                let outputRootDirectory = parsedArguments.outputDirectory ?? defaultPluginOutputDirectory
+                try? FileManager.default.createDirectory(at: outputRootDirectory, withIntermediateDirectories: true)
+
+                if intermediateDocumentationArchives.count > 1 {
+                    for archive in intermediateDocumentationArchives {
+                        let targetName = archive.deletingPathExtension().lastPathComponent
+                        let gitbookOutputDirectory = outputRootDirectory.appendingPathComponent(targetName, isDirectory: true)
+                        try? FileManager.default.removeItem(at: gitbookOutputDirectory)
+                        try FileManager.default.createDirectory(at: gitbookOutputDirectory, withIntermediateDirectories: true)
+
+                        let exporterURL = URL(fileURLWithPath: gitbookExportTool.path.string, isDirectory: false)
+                        let exporterArguments = [
+                            "--input-archive", archive.standardizedFileURL.path,
+                            "--output-dir", gitbookOutputDirectory.standardizedFileURL.path,
+                            "--book-title", targetName,
+                        ]
+                        if verbose {
+                            print("docc-gitbook-export invocation: '\(exporterURL.path) \(exporterArguments.joined(separator: " "))'")
+                        }
+                        let process = try Process.run(exporterURL, arguments: exporterArguments)
+                        process.waitUntilExit()
+                        guard process.terminationReason == .exit && process.terminationStatus == 0 else {
+                            Diagnostics.error("'docc-gitbook-export' invocation failed with a nonzero exit code: '\(process.terminationStatus)'")
+                            return
+                        }
+                    }
+
+                    print("""
+                    Generated \(intermediateDocumentationArchives.count) GitBook Markdown documentation folders:
+                      \(intermediateDocumentationArchives.map { outputRootDirectory.appendingPathComponent($0.deletingPathExtension().lastPathComponent, isDirectory: true) }.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).map(\.standardizedFileURL.path).joined(separator: "\n  "))
+                    """)
+                } else {
+                    // If the developer built one target, export directly into the specified output directory.
+                    let archive = firstIntermediateArchive
+                    let gitbookOutputDirectory: URL
+                    if let specifiedOutputLocation = parsedArguments.outputDirectory {
+                        gitbookOutputDirectory = specifiedOutputLocation
+                    } else {
+                        gitbookOutputDirectory = defaultPluginOutputDirectory.appendingPathComponent(
+                            "\(context.package.displayName.replacingWhitespaceAndPunctuation(with: "-"))",
+                            isDirectory: true
+                        )
+                    }
+                    try? FileManager.default.removeItem(at: gitbookOutputDirectory)
+                    try FileManager.default.createDirectory(at: gitbookOutputDirectory, withIntermediateDirectories: true)
+
+                    let exporterURL = URL(fileURLWithPath: gitbookExportTool.path.string, isDirectory: false)
+                    let exporterArguments = [
+                        "--input-archive", archive.standardizedFileURL.path,
+                        "--output-dir", gitbookOutputDirectory.standardizedFileURL.path,
+                        "--book-title", context.package.displayName,
+                    ]
+                    if verbose {
+                        print("docc-gitbook-export invocation: '\(exporterURL.path) \(exporterArguments.joined(separator: " "))'")
+                    }
+                    let process = try Process.run(exporterURL, arguments: exporterArguments)
+                    process.waitUntilExit()
+                    guard process.terminationReason == .exit && process.terminationStatus == 0 else {
+                        Diagnostics.error("'docc-gitbook-export' invocation failed with a nonzero exit code: '\(process.terminationStatus)'")
+                        return
+                    }
+
+                    print("""
+                    Generated GitBook Markdown documentation at:
+                      \(gitbookOutputDirectory.standardizedFileURL.path)
+                    """)
+                }
+                return
+            }
+
             // Move the intermediate archives into their final output location(s).
             let defaultPluginOutputDirectory = URL(fileURLWithPath: context.pluginWorkDirectory.string)
             if intermediateDocumentationArchives.count > 1 {
@@ -201,13 +290,8 @@ import PackagePlugin
         
         // Merge the intermediate archives into a combined archive
         
-        let combinedArchiveOutput: URL
-        if let specifiedOutputLocation = parsedArguments.outputDirectory {
-            combinedArchiveOutput = specifiedOutputLocation
-        } else {
-            let combinedArchiveName = "\(context.package.displayName.replacingWhitespaceAndPunctuation(with: "-")).doccarchive"
-            combinedArchiveOutput = URL(fileURLWithPath: context.pluginWorkDirectory.appending(combinedArchiveName).string)
-        }
+        let combinedArchiveName = "\(context.package.displayName.replacingWhitespaceAndPunctuation(with: "-")).doccarchive"
+        let combinedArchiveOutput: URL = URL(fileURLWithPath: context.pluginWorkDirectory.appending(combinedArchiveName).string)
         
         var mergeCommandArguments = CommandLineArguments(
             ["merge"] + intermediateDocumentationArchives.map(\.standardizedFileURL.path)
@@ -230,11 +314,60 @@ import PackagePlugin
         // Create a new combined archive
         let process = try Process.run(doccExecutableURL, arguments: mergeCommandArguments.remainingArguments)
         process.waitUntilExit()
-        
-        print("""
-        Generated combined documentation archive at:
-          \(combinedArchiveOutput.standardizedFileURL.path)
-        """)
+
+        if outputFormat == .gitbook {
+            guard let gitbookExportTool else {
+                Diagnostics.error("The GitBook export tool is not available in this toolchain/build.")
+                return
+            }
+
+            let defaultPluginOutputDirectory = URL(fileURLWithPath: context.pluginWorkDirectory.string)
+            let gitbookOutputDirectory: URL
+            if let specifiedOutputLocation = parsedArguments.outputDirectory {
+                gitbookOutputDirectory = specifiedOutputLocation
+            } else {
+                gitbookOutputDirectory = defaultPluginOutputDirectory.appendingPathComponent("\(context.package.displayName.replacingWhitespaceAndPunctuation(with: "-"))", isDirectory: true)
+            }
+
+            try? FileManager.default.removeItem(at: gitbookOutputDirectory)
+            try? FileManager.default.createDirectory(at: gitbookOutputDirectory, withIntermediateDirectories: true)
+
+            let exporterURL = URL(fileURLWithPath: gitbookExportTool.path.string, isDirectory: false)
+            let exporterArguments = [
+                "--input-archive", combinedArchiveOutput.standardizedFileURL.path,
+                "--output-dir", gitbookOutputDirectory.standardizedFileURL.path,
+                "--book-title", context.package.displayName,
+            ]
+            if verbose {
+                print("docc-gitbook-export invocation: '\(exporterURL.path) \(exporterArguments.joined(separator: " "))'")
+            }
+            let exportProcess = try Process.run(exporterURL, arguments: exporterArguments)
+            exportProcess.waitUntilExit()
+            guard exportProcess.terminationReason == .exit && exportProcess.terminationStatus == 0 else {
+                Diagnostics.error("'docc-gitbook-export' invocation failed with a nonzero exit code: '\(exportProcess.terminationStatus)'")
+                return
+            }
+
+            print("""
+            Generated combined GitBook Markdown documentation at:
+              \(gitbookOutputDirectory.standardizedFileURL.path)
+            """)
+        } else {
+            // Move the combined archive to the requested output directory (if any).
+            if let specifiedOutputLocation = parsedArguments.outputDirectory {
+                try? FileManager.default.removeItem(at: specifiedOutputLocation)
+                try? FileManager.default.moveItem(at: combinedArchiveOutput, to: specifiedOutputLocation)
+                print("""
+                Generated combined documentation archive at:
+                  \(specifiedOutputLocation.standardizedFileURL.path)
+                """)
+            } else {
+                print("""
+                Generated combined documentation archive at:
+                  \(combinedArchiveOutput.standardizedFileURL.path)
+                """)
+            }
+        }
     }
 }
 

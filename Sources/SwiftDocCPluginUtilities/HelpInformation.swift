@@ -43,10 +43,21 @@ public enum HelpInformation {
             helpText = previewPluginHelpOverview
         }
         
-        var supportedPluginFlags = [
-            DocumentedArgument.disableLMDBIndex,
-            DocumentedArgument.verbose,
-        ]
+        var supportedPluginFlags: [DocumentedArgument] = {
+            switch pluginAction {
+            case .convert:
+                return [
+                    DocumentedArgument.outputFormat,
+                    DocumentedArgument.disableLMDBIndex,
+                    DocumentedArgument.verbose,
+                ]
+            case .preview:
+                return [
+                    DocumentedArgument.disableLMDBIndex,
+                    DocumentedArgument.verbose,
+                ]
+            }
+        }()
         
         let doccFeatures = (try? DocCFeatures(doccExecutable: doccExecutableURL)) ?? .init()
         if doccFeatures.contains(.linkDependencies) {

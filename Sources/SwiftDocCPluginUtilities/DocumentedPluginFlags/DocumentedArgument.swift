@@ -51,6 +51,15 @@ struct DocumentedArgument {
 // MARK: Plugin flags
 
 extension DocumentedArgument {
+    /// A plugin option to select the output format.
+    ///
+    /// This is a plugin-only option and is not forwarded to DocC.
+    static let outputFormat = Self(
+        option: .init(preferred: "--output-format"),
+        abstract: "Select the plugin output format. (default: doccarchive)",
+        discussion: "Supported values are: `doccarchive`, `gitbook`."
+    )
+
     /// A plugin feature flag to enable building combined documentation for multiple targets.
     ///
     /// - Note: This flag requires that the `docc` executable supports ``Feature/linkDependencies``.

@@ -10,10 +10,17 @@ import Foundation
 
 /// A container of parsed values for the command line arguments that apply to the plugin itself.
 struct ParsedPluginArguments {
+    enum OutputFormat: String {
+        case doccarchive
+        case gitbook
+    }
+
     var enableCombinedDocumentation: Bool
     var disableLMDBIndex: Bool
     var verbose: Bool
     var help: Bool
+    var outputFormat: OutputFormat
+    var unknownOutputFormat: String?
     
     /// Creates a new plugin arguments container by extracting the known plugin values from a command line argument list.
     init(extractingFrom arguments: inout CommandLineArguments) {
@@ -21,6 +28,20 @@ struct ParsedPluginArguments {
         disableLMDBIndex = arguments.extractFlag(.disableLMDBIndex) ?? false
         verbose          = arguments.extractFlag(.verbose)          ?? false
         help             = arguments.extract(Self.help).last        ?? false
+
+        let rawOutputFormat = arguments.extractOption(.outputFormat)
+        if let rawOutputFormat {
+            if let format = OutputFormat(rawValue: rawOutputFormat) {
+                outputFormat = format
+                unknownOutputFormat = nil
+            } else {
+                outputFormat = .doccarchive
+                unknownOutputFormat = rawOutputFormat
+            }
+        } else {
+            outputFormat = .doccarchive
+            unknownOutputFormat = nil
+        }
     }
     
     /// A common command line tool flag to print the help text instead of running the command.
